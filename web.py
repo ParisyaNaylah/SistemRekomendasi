@@ -410,7 +410,7 @@ def meal_plan_to_df(meal_plan):
 # STREAMLIT UI
 # ============================================================
 
-st.title("🥗 Sistem Rekomendasi Menu Makanan Penurunan Berat Badan")
+st.title("Sistem Rekomendasi Menu Makanan untuk Penurunan Berat Badan")
 
 with st.sidebar:
     st.header("📋 Data Pengguna")
