@@ -105,27 +105,31 @@ def calculate_weight_loss_plan(current_weight, target_weight, duration_months, e
         'adjusted_energy'     : adjusted_energy,
     }
 
-def validate_weight_loss_plan(gender, current_weight, target_weight,
-                               duration_months, energy_needs, adjusted_energy):
-    MIN_ENERGY       = 1500 if gender.lower() == 'laki-laki' else 1200
-    MAX_MONTHLY_LOSS = 4
-    warnings_list    = []
-    suggestion       = None
+def validate_weight_loss_plan(gender, current_weight, target_weight, duration_months, energy_needs, adjusted_energy):
+    MAX_MONTHLY_LOSS = 2
+
+    warnings = []
+    suggestion = None
+
+    # Validasi target berat badan
     if target_weight >= current_weight:
-        warnings_list.append("Target berat badan harus lebih rendah.")
-        return False, warnings_list, suggestion
-    total_loss   = current_weight - target_weight
+        warnings.append("Target berat badan harus lebih rendah.")
+        return False, warnings, suggestion
+
+    total_loss = current_weight - target_weight
     monthly_loss = total_loss / duration_months
-    if monthly_loss > MAX_MONTHLY_LOSS or adjusted_energy < MIN_ENERGY:
-        warnings_list.append("Target terlalu ekstrem.")
-        max_safe = energy_needs - MIN_ENERGY
-        if max_safe > 0:
-            min_months = max((total_loss * 7700 / max_safe) / 30, total_loss / MAX_MONTHLY_LOSS)
-            safe       = math.ceil(min_months * 2) / 2
-            suggestion = f"Untuk menurunkan {total_loss} kg dengan aman, disarankan durasi minimal {safe} bulan."
-        else:
-            suggestion = "Defisit kalori tidak disarankan karena energi sudah di batas minimum."
-    return len(warnings_list) == 0, warnings_list, suggestion
+
+    # Cek apakah target terlalu ekstrem
+    if monthly_loss > MAX_MONTHLY_LOSS:
+        warnings.append("Target terlalu ekstrem.")
+
+        months_based_on_speed = total_loss / MAX_MONTHLY_LOSS
+        safe_duration_rounded = math.ceil(months_based_on_speed * 2) / 2
+
+        suggestion = f"Untuk menurunkan {total_loss} kg dengan aman, disarankan durasi minimal selama {safe_duration_rounded} bulan."
+
+    is_valid = len(warnings) == 0
+    return is_valid, warnings, suggestion
 
 def get_nutrition_requirements(gender, age, adjusted_energy):
     age_category = get_age_category(age)
