@@ -181,7 +181,7 @@ def process_user_data(gender, age, height, weight, activity_level, target_weight
     energy_needs     = calculate_energy_needs(gender, age, height, weight, activity_level)
     wlp              = calculate_weight_loss_plan(weight, target_weight, duration_months, energy_needs)
     is_valid, warnings_list, suggestion = validate_weight_loss_plan(
-        gender, weight, target_weight, duration_months, energy_needs, wlp['adjusted_energy'])
+    weight, target_weight, duration_months)
     if not is_valid:
         return {'is_valid': False, 'warnings': warnings_list, 'suggestion': suggestion}
     nutrition_req = get_nutrition_requirements(gender, age, wlp['adjusted_energy'])
