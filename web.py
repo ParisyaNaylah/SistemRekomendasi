@@ -105,7 +105,7 @@ def calculate_weight_loss_plan(current_weight, target_weight, duration_months, e
         'adjusted_energy'     : adjusted_energy,
     }
 
-def validate_weight_loss_plan(current_weight, target_weight, duration_months):
+def validate_weight_loss_plan(gender, current_weight, target_weight, duration_months, energy_needs, adjusted_energy):
     MAX_MONTHLY_LOSS = 4
 
     warnings = []
