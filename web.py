@@ -431,8 +431,8 @@ with st.sidebar:
     }
     activity_label = st.selectbox("Tingkat Aktivitas", list(activity_options.keys()), index=2)
     activity_level = activity_options[activity_label]
-    target_weight   = st.number_input("Target Berat Badan (kg)", min_value=30, max_value=300, value=80)
-    duration_months = st.number_input("Durasi (bulan)", min_value=1.0, max_value=36.0, value=5, step=0.5)
+    target_weight   = st.number_input("Target Berat Badan (kg)", min_value=30, max_value=300, value=75)
+    duration_months = st.number_input("Durasi (bulan)", min_value=1.0, max_value=36.0, value=6.5, step=0.5)
     generate_btn = st.button("🚀 Generate Meal Plan", type="primary", use_container_width=True)
 
 if generate_btn:
