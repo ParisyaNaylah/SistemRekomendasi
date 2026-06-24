@@ -107,29 +107,25 @@ def calculate_weight_loss_plan(current_weight, target_weight, duration_months, e
 
 def validate_weight_loss_plan(current_weight, target_weight, duration_months):
     MAX_MONTHLY_LOSS = 4
+    warnings_list    = []
+    suggestion       = None
 
-    warnings = []
-    suggestion = None
-
-    # Validasi target berat badan
+    # Blok total hanya kalau target >= berat sekarang
     if target_weight >= current_weight:
-        warnings.append("Target berat badan harus lebih rendah.")
-        return False, warnings, suggestion
+        warnings_list.append("Target berat badan harus lebih rendah dari berat badan saat ini.")
+        return False, warnings_list, suggestion
 
-    total_loss = current_weight - target_weight
+    total_loss   = current_weight - target_weight
     monthly_loss = total_loss / duration_months
 
-    # Cek apakah target terlalu ekstrem
+    # Kalau terlalu agresif: warning saja, tidak diblok
     if monthly_loss > MAX_MONTHLY_LOSS:
-        warnings.append("Target terlalu ekstrem.")
-
+        warnings_list.append("Target penurunan berat badan terlalu agresif.")
         months_based_on_speed = total_loss / MAX_MONTHLY_LOSS
         safe_duration_rounded = math.ceil(months_based_on_speed * 2) / 2
-
         suggestion = f"Untuk menurunkan {total_loss} kg dengan aman, disarankan durasi minimal selama {safe_duration_rounded} bulan."
 
-    is_valid = len(warnings) == 0
-    return is_valid, warnings, suggestion
+    return True, warnings_list, suggestion
 
 def get_nutrition_requirements(gender, age, adjusted_energy):
     age_category = get_age_category(age)
@@ -174,21 +170,23 @@ def process_user_data(gender, age, height, weight, activity_level, target_weight
     bmi_category = get_bmi_category(bmi)
     if bmi < 25:
         return {
-            'is_valid' : False,
-            'warnings' : [f"Sistem ini tidak direkomendasikan untuk pengguna dengan kategori {bmi_category}."],
+            'is_valid'  : False,
+            'warnings'  : [f"Sistem ini tidak direkomendasikan untuk pengguna dengan kategori {bmi_category}."],
             'suggestion': None,
         }
-    energy_needs     = calculate_energy_needs(gender, age, height, weight, activity_level)
-    wlp              = calculate_weight_loss_plan(weight, target_weight, duration_months, energy_needs)
-    is_valid, warnings_list, suggestion = validate_weight_loss_plan(
-    weight, target_weight, duration_months)
+    energy_needs = calculate_energy_needs(gender, age, height, weight, activity_level)
+    wlp          = calculate_weight_loss_plan(weight, target_weight, duration_months, energy_needs)
+    is_valid, warnings_list, suggestion = validate_weight_loss_plan(weight, target_weight, duration_months)
+
     if not is_valid:
         return {'is_valid': False, 'warnings': warnings_list, 'suggestion': suggestion}
+
     nutrition_req = get_nutrition_requirements(gender, age, wlp['adjusted_energy'])
     age_category  = get_age_category(age)
     return {
         'is_valid'         : True,
         'warnings'         : warnings_list,
+        'suggestion'       : suggestion,
         'gender'           : gender,
         'age'              : age,
         'age_category'     : age_category,
@@ -439,10 +437,13 @@ if generate_btn:
     with st.spinner("Memproses data pengguna..."):
         user_input = process_user_data(gender, age, height, weight,
                                        activity_level, target_weight, duration_months)
+
+    # Blok total: BMI normal atau target >= berat sekarang
     if not user_input['is_valid']:
         st.error("❌ " + " ".join(user_input['warnings']))
-        if user_input['suggestion']:
+        if user_input.get('suggestion'):
             st.info(f"💡 {user_input['suggestion']}")
+
     else:
         nutrition_req = user_input['nutrition_req']
         wlp           = user_input['weight_loss_plan']
@@ -456,7 +457,7 @@ if generate_btn:
         }
         nutrient_cols_eval = list(nutrient_targets.keys())
 
-        # --- PROFIL PENGGUNA ---
+        # --- PROFIL PENGGUNA (selalu tampil jika is_valid=True) ---
         st.header("👤 Profil Pengguna")
         prediksi_turun = (wlp['daily_deficit'] * duration_months * 30) * 0.00013
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -485,6 +486,13 @@ if generate_btn:
             for i, (nama, nilai, satuan) in enumerate(nutrisi_display):
                 cols[i % 4].metric(nama, f"{nilai:.1f} {satuan}")
 
+        # Kalau target terlalu agresif: tampilkan warning dan stop
+        if user_input['warnings']:
+            st.warning("⚠️ " + " ".join(user_input['warnings']))
+            if user_input.get('suggestion'):
+                st.info(f"💡 {user_input['suggestion']}")
+            st.stop()
+
         # --- GENERATE MEAL PLAN ---
         st.header("🍽️ Menu Makanan")
         with st.spinner("Menyusun meal plan..."):
@@ -499,11 +507,9 @@ if generate_btn:
                 target   = nutrition_req['Energi']
                 total    = day_plan['Total_Kalori']
                 in_range = (target * 0.90) <= total <= (target * 1.10)
-                status   = "✅ Dalam rentang target" if in_range else "⚠️ Di luar rentang target"
                 total_p = sum(f['Protein'] for f in day_plan['Makanan'])
                 total_l = sum(f['Lemak'] for f in day_plan['Makanan'])
                 total_k = sum(f['Karbohidrat'] for f in day_plan['Makanan'])
-                total_s = sum(f['Serat'] for f in day_plan['Makanan'])
                 pct_k   = (total_k*4)/total*100 if total > 0 else 0
                 pct_l   = (total_l*9)/total*100 if total > 0 else 0
                 pct_p   = (total_p*4)/total*100 if total > 0 else 0
@@ -565,7 +571,6 @@ if generate_btn:
                 st.pyplot(fig)
                 plt.close()
 
-                # Tabel pemenuhan nutrisi
                 st.markdown("**Pemenuhan Nutrisi Hari Ini**")
                 st.caption("Rentang optimal: Energi, Lemak, Karbohidrat, Protein, Serat (90–110%) · Natrium (≤100%)")
                 pemenuhan_rows = []
@@ -573,8 +578,7 @@ if generate_btn:
                     tgt_val = nutrient_targets[col]
                     act_val = row[col] if col in row else 0
                     pct_val = act_val / tgt_val * 100 if tgt_val > 0 else 0
-
-                    if col in ('Natrium'):
+                    if col == 'Natrium':
                         status_txt = '✅ Optimal' if pct_val <= 100 else '⚠️ Melebihi target'
                     else:
                         if 90 <= pct_val <= 110:
@@ -583,13 +587,12 @@ if generate_btn:
                             status_txt = '⚠️ Di bawah target'
                         else:
                             status_txt = '⚠️ Melebihi target'
-
                     pemenuhan_rows.append({
-                        "Nutrisi"      : col,
-                        "Rekomendasi"  : f"{act_val:.1f}",
-                        "Target"       : f"{tgt_val:.1f}",
-                        "Pemenuhan"    : f"{pct_val:.1f}%",
-                        "Status"       : status_txt,
+                        "Nutrisi"    : col,
+                        "Rekomendasi": f"{act_val:.1f}",
+                        "Target"     : f"{tgt_val:.1f}",
+                        "Pemenuhan"  : f"{pct_val:.1f}%",
+                        "Status"     : status_txt,
                     })
                 st.dataframe(pd.DataFrame(pemenuhan_rows), use_container_width=True, hide_index=True)
 
@@ -598,14 +601,10 @@ if generate_btn:
         total_per_hari = meal_plan_df.groupby('Hari')['Energi'].sum()
         target_kalori  = nutrition_req['Energi']
 
-        # MAPE kalori
-        mape_kalori = (total_per_hari - target_kalori).abs().mean() / target_kalori * 100
-
-        # MAPE prediksi penurunan berat badan
+        mape_kalori    = (total_per_hari - target_kalori).abs().mean() / target_kalori * 100
         target_turun   = wlp['total_loss_target']
         mape_penurunan = abs(prediksi_turun - target_turun) / target_turun * 100
 
-        # MAPE per nutrisi
         mape_eval = {}
         for col, tgt in nutrient_targets.items():
             if col in daily_nutrient.columns:
@@ -613,7 +612,6 @@ if generate_btn:
                 mape_eval[col] = round(mape_val / tgt * 100, 1)
         rata_mape = sum(mape_eval.values()) / len(mape_eval)
 
-        # Metrik utama
         ec1, ec2, ec3 = st.columns(3)
         ec1.metric("MAPE Kalori", f"{mape_kalori:.1f}%",
                    help="Rata-rata persentase selisih kalori harian vs target")
@@ -622,7 +620,6 @@ if generate_btn:
         ec3.metric("Rata-rata MAPE Nutrisi", f"{rata_mape:.1f}%",
                    help="Rata-rata MAPE dari semua nutrisi")
 
-        # MAPE per nutrisi tabel
         st.subheader("MAPE per Nutrisi (% dari Target)")
         mape_rows = []
         for col, pct in mape_eval.items():
