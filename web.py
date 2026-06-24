@@ -597,7 +597,6 @@ if generate_btn:
         st.header("📈 Evaluasi Meal Plan")
         total_per_hari = meal_plan_df.groupby('Hari')['Energi'].sum()
         target_kalori  = nutrition_req['Energi']
-        mean_dist      = meal_plan_df['EuclideanDistance'].mean()
 
         # MAPE kalori
         mape_kalori = (total_per_hari - target_kalori).abs().mean() / target_kalori * 100
@@ -615,15 +614,13 @@ if generate_btn:
         rata_mape = sum(mape_eval.values()) / len(mape_eval)
 
         # Metrik utama
-        ec1, ec2, ec3, ec4 = st.columns(4)
+        ec1, ec2, ec3 = st.columns(3)
         ec1.metric("MAPE Kalori", f"{mape_kalori:.1f}%",
                    help="Rata-rata persentase selisih kalori harian vs target")
         ec2.metric("MAPE Penurunan", f"{mape_penurunan:.2f}%",
                    help="Persentase selisih prediksi penurunan vs target penurunan")
         ec3.metric("Rata-rata MAPE Nutrisi", f"{rata_mape:.1f}%",
                    help="Rata-rata MAPE dari semua nutrisi")
-        ec4.metric("Mean Euclidean Distance", f"{mean_dist:.4f}",
-                   help="Rata-rata jarak KNN semua makanan terpilih")
 
         # MAPE per nutrisi tabel
         st.subheader("MAPE per Nutrisi (% dari Target)")
