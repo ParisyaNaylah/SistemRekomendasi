@@ -332,16 +332,17 @@ def knapsack_dp(candidates_per_group, calorie_budget):
         feasible = df[df['Energi'] <= calorie_budget].copy()
         if feasible.empty:
             continue
-
+        
         feasible['knapsack_value'] = 1.0 / (feasible['euclidean_distance'] + 1e-6)
         max_val = feasible['knapsack_value'].max()
         max_cal = feasible['Energi'].max()
         max_fat = feasible['Lemak'].max()
+        priority_multiplier = 2.0 if group == 'Makanan Utama' else 1.0
         feasible['combined_score'] = (
             0.50 * (feasible['knapsack_value'] / (max_val + 1e-9)) +
             0.50 * (feasible['Energi']         / (max_cal + 1e-9)) -
             0.15 * (feasible['Lemak']           / (max_fat + 1e-9))
-        )
+        ) * priority_multiplier
         records = []
         for _, row in feasible.iterrows():
             r = row.to_dict()
@@ -479,6 +480,7 @@ def generate_meal_plan(nutrition_req, df_preprocessed, df_original,
                     'VitaminD'         : round(chosen['VitaminD'], 2),
                     'EuclideanDistance': round(chosen['euclidean_distance'], 4),
                 })
+        daily_plan['Total_Kalori'] = round(total_day_cal, 2)
 
         meal_plan.append(daily_plan)
 
