@@ -213,6 +213,7 @@ KNN_FEATURES = [
     'Natrium', 'Kalium', 'Kalsium', 'Magnesium',
     'Besi', 'VitaminC', 'VitaminD'
 ]
+
 MEAL_CALORIE_RATIO = {
     'Sarapan'    : 0.25,
     'Snack Pagi' : 0.10,
@@ -220,6 +221,7 @@ MEAL_CALORIE_RATIO = {
     'Snack Sore' : 0.10,
     'Makan Malam': 0.20,
 }
+
 MEAL_FOOD_GROUPS = {
     'Sarapan'    : ['Makanan Utama', 'Makanan Pendamping'],
     'Snack Pagi' : ['Minuman dan Buah', 'Kacang'],
@@ -227,116 +229,234 @@ MEAL_FOOD_GROUPS = {
     'Snack Sore' : ['Minuman dan Buah', 'Kacang'],
     'Makan Malam': ['Makanan Utama', 'Makanan Pendamping'],
 }
+
 N_CANDIDATES = 100
 
+
 def build_category_rotation(df_original, days=7, seed=42):
+    """
+    Membuat jadwal rotasi FoodCategory per FoodGroup untuk setiap hari.
+    Tujuan: variasi menu dengan rotasi round-robin antar kategori.
+    """
     rng = random.Random(seed)
+
     categories_per_group = {}
     for fg in df_original['FoodGroup'].dropna().unique():
-        cats = df_original[df_original['FoodGroup']==fg]['FoodCategory'].dropna().unique().tolist()
+        cats = df_original[df_original['FoodGroup'] == fg]['FoodCategory'].dropna().unique().tolist()
         categories_per_group[fg] = cats
+
     rotation_order = {}
-    for fg, cats in categories_per_group.items():
-        shuffled = cats.copy(); rng.shuffle(shuffled)
+    for food_group, categories in categories_per_group.items():
+        shuffled = categories.copy()
+        rng.shuffle(shuffled)
         while len(shuffled) < days:
-            extra = cats.copy(); rng.shuffle(extra); shuffled.extend(extra)
-        rotation_order[fg] = shuffled
+            extra = categories.copy()
+            rng.shuffle(extra)
+            shuffled.extend(extra)
+        rotation_order[food_group] = shuffled
+
     rotation = {}
-    for day in range(1, days+1):
-        rotation[day] = {fg: rotation_order[fg][day-1] for fg in categories_per_group}
+    for day in range(1, days + 1):
+        rotation[day] = {fg: rotation_order[fg][day - 1] for fg in categories_per_group}
+
     return rotation
 
+
 def get_knn_candidates_per_group(nutrition_req, df_preprocessed, df_original,
-                                  scaler, nutrient_cols, food_group,
-                                  meal_proportion, n_candidates=N_CANDIDATES,
-                                  target_category=None):
+                                 scaler, nutrient_cols, food_group,
+                                 meal_proportion, n_candidates=N_CANDIDATES,
+                                 target_category=None):
+    """
+    Mencari N kandidat makanan paling mirip secara nutrisi menggunakan KNN
+    dengan jarak Euclidean pada fitur nutrisi yang dinormalisasi.
+    """
     if food_group == 'Kacang':
         mask          = df_preprocessed['FoodName'].str.startswith('Kacang', na=False)
         df_group      = df_preprocessed[mask]
         df_orig_group = df_original[mask]
     else:
         if target_category:
-            mask = ((df_preprocessed['FoodGroup']==food_group) &
-                    (df_preprocessed['FoodCategory']==target_category))
+            mask = (
+                (df_preprocessed['FoodGroup'] == food_group) &
+                (df_preprocessed['FoodCategory'] == target_category)
+            )
         else:
-            mask = df_preprocessed['FoodGroup']==food_group
+            mask = df_preprocessed['FoodGroup'] == food_group
         df_group      = df_preprocessed[mask]
         df_orig_group = df_original[mask]
+
     if df_group.empty:
         return pd.DataFrame()
+
     query_raw = [
-        nutrition_req[col]*meal_proportion if col in nutrition_req else 0.0
+        nutrition_req[col] * meal_proportion if col in nutrition_req else 0.0
         for col in nutrient_cols
     ]
     query_normalized = np.clip(scaler.transform([query_raw]), 0, 1)
     feat_indices     = [nutrient_cols.index(f) for f in KNN_FEATURES if f in nutrient_cols]
     query_knn        = query_normalized[0][feat_indices].reshape(1, -1)
+
     X_group  = df_group[KNN_FEATURES].values
     k_actual = min(n_candidates, len(df_group))
     knn_g    = NearestNeighbors(n_neighbors=k_actual, metric='euclidean')
     knn_g.fit(X_group)
+
     distances, local_idx = knn_g.kneighbors(query_knn)
-    candidates = df_orig_group.iloc[local_idx[0]].copy()
+    candidates                       = df_orig_group.iloc[local_idx[0]].copy()
     candidates['euclidean_distance'] = distances[0]
+
     return candidates.sort_values('euclidean_distance', ascending=True)
 
-def knapsack_select_food(candidates_df, calorie_budget):
-    if candidates_df.empty:
-        return None
-    feasible = candidates_df[candidates_df['Energi'] <= calorie_budget].copy()
-    if feasible.empty:
-        return None
-    feasible['knapsack_value'] = 1.0 / (feasible['euclidean_distance'] + 1e-6)
-    max_val = feasible['knapsack_value'].max()
-    max_cal = feasible['Energi'].max()
-    max_fat = feasible['Lemak'].max()
-    feasible['combined_score'] = (
-        0.50 * (feasible['knapsack_value'] / (max_val + 1e-9)) +
-        0.50 * (feasible['Energi']         / (max_cal + 1e-9)) -
-        0.15 * (feasible['Lemak']          / (max_fat + 1e-9))
-    )
-    return feasible.loc[feasible['combined_score'].idxmax()].to_dict()
+
+def knapsack_dp(candidates_per_group, calorie_budget):
+    """
+    Memilih makanan dari setiap FoodGroup menggunakan Dynamic Programming (0/1 Knapsack).
+
+    Setiap FoodGroup diperlakukan sebagai satu kelas item; sistem dapat memilih
+    0 atau 1 item per kelas. DP mencari kombinasi lintas FoodGroup yang
+    memaksimalkan total skor dalam batas anggaran kalori slot makan.
+
+    Kompleksitas: O(m × W × n) — m=jumlah kelas, W=budget kkal, n=kandidat per kelas.
+    """
+    if not candidates_per_group:
+        return {}
+
+    W       = int(calorie_budget)   # diskritisasi budget ke integer kkal
+    NEG_INF = float('-inf')
+
+    # Hitung combined score per item, siapkan representasi integer kalori
+    scored_groups = []
+    for group, df in candidates_per_group.items():
+        if df.empty:
+            continue
+        feasible = df[df['Energi'] <= calorie_budget].copy()
+        if feasible.empty:
+            continue
+
+        feasible['knapsack_value'] = 1.0 / (feasible['euclidean_distance'] + 1e-6)
+        max_val = feasible['knapsack_value'].max()
+        max_cal = feasible['Energi'].max()
+        max_fat = feasible['Lemak'].max()
+        feasible['combined_score'] = (
+            0.50 * (feasible['knapsack_value'] / (max_val + 1e-9)) +
+            0.50 * (feasible['Energi']         / (max_cal + 1e-9)) -
+            0.15 * (feasible['Lemak']           / (max_fat + 1e-9))
+        )
+        records = []
+        for _, row in feasible.iterrows():
+            r = row.to_dict()
+            r['_cal_int'] = max(1, int(round(r['Energi'])))
+            records.append(r)
+        scored_groups.append((group, records))
+
+    if not scored_groups:
+        return {}
+
+    m = len(scored_groups)
+
+    # prev[w] = skor maksimum menggunakan grup yang sudah diproses dengan total kalori = w
+    prev    = [NEG_INF] * (W + 1)
+    prev[0] = 0.0
+
+    # all_track[j][w] = (item, w_sebelum) jika item dari grup j dipilih saat budget=w
+    #                   None jika grup j tidak berkontribusi di budget ini
+    all_track = []
+
+    for j, (group, records) in enumerate(scored_groups):
+        curr    = prev[:]            # salin: opsi tidak pilih item dari grup ini
+        track_j = [None] * (W + 1)
+
+        for w_before in range(W + 1):
+            if prev[w_before] == NEG_INF:
+                continue
+            for item in records:
+                w_new           = w_before + item['_cal_int']
+                candidate_score = prev[w_before] + item['combined_score']
+                if w_new <= W and candidate_score > curr[w_new]:
+                    curr[w_new]    = candidate_score
+                    track_j[w_new] = (item, w_before)
+
+        all_track.append(track_j)
+        prev = curr
+
+    # Cari budget akhir dengan skor tertinggi
+    best_w = max(range(W + 1), key=lambda w: prev[w] if prev[w] != NEG_INF else NEG_INF)
+    if prev[best_w] <= 0 or prev[best_w] == NEG_INF:
+        return {}
+
+    # Traceback: rekonstruksi item yang dipilih dari setiap grup
+    result = {}
+    curr_w = best_w
+    for j in range(m - 1, -1, -1):
+        group, _ = scored_groups[j]
+        t = all_track[j][curr_w]
+        if t is not None:
+            item, prev_w   = t
+            result[group]  = item
+            curr_w         = prev_w
+
+    return result
+
 
 def generate_meal_plan(nutrition_req, df_preprocessed, df_original,
                        scaler, nutrient_cols, days=7):
+    """
+    Menghasilkan meal plan selama `days` hari menggunakan KNN + Dynamic Programming.
+
+    Alur per hari → per slot makan:
+      1. Rotasi kategori  → variasi FoodCategory antar hari (round-robin)
+      2. KNN              → cari kandidat per FoodGroup dalam kategori yang dijadwalkan
+      3. DP (0/1 Knapsack)→ pilih kombinasi optimal lintas FoodGroup dalam batas kalori slot
+    """
     daily_calorie     = nutrition_req['Energi']
     used_foods        = set()
     meal_plan         = []
     category_rotation = build_category_rotation(df_original, days=days)
-    for day in range(1, days+1):
+
+    for day in range(1, days + 1):
         daily_plan    = {'Hari': day, 'Total_Kalori': 0, 'Makanan': []}
         total_day_cal = 0.0
+
         for meal_time, ratio in MEAL_CALORIE_RATIO.items():
-            remaining      = daily_calorie * ratio
+            slot_budget    = daily_calorie * ratio
             allowed_groups = MEAL_FOOD_GROUPS[meal_time]
+
+            # Kumpulkan kandidat per FoodGroup
+            candidates_per_group = {}
             for food_group in allowed_groups:
-                if remaining <= 10:
-                    continue
                 target_category = None if food_group == 'Kacang' \
                                    else category_rotation[day].get(food_group)
+
                 candidates = get_knn_candidates_per_group(
                     nutrition_req, df_preprocessed, df_original, scaler, nutrient_cols,
                     food_group, ratio, N_CANDIDATES, target_category)
+
                 pool = candidates[~candidates['FoodName'].isin(used_foods)].copy() \
                        if not candidates.empty else pd.DataFrame()
+
+                # Fallback: kategori rotasi habis → cari semua kategori FoodGroup
                 if pool.empty and food_group != 'Kacang':
                     candidates = get_knn_candidates_per_group(
                         nutrition_req, df_preprocessed, df_original, scaler, nutrient_cols,
                         food_group, ratio, N_CANDIDATES, None)
                     pool = candidates[~candidates['FoodName'].isin(used_foods)].copy() \
                            if not candidates.empty else pd.DataFrame()
+
+                # Fallback khusus Makanan Utama: izinkan pengulangan jika benar-benar habis
                 if pool.empty and food_group == 'Makanan Utama':
                     candidates = get_knn_candidates_per_group(
                         nutrition_req, df_preprocessed, df_original, scaler, nutrient_cols,
                         food_group, ratio, N_CANDIDATES, None)
                     pool = candidates.copy() if not candidates.empty else pd.DataFrame()
-                if pool.empty:
-                    continue
-                chosen = knapsack_select_food(pool, remaining)
-                if chosen is None:
-                    continue
+
+                if not pool.empty:
+                    candidates_per_group[food_group] = pool
+
+            # DP: pilih kombinasi optimal lintas FoodGroup dalam budget slot
+            selected = knapsack_dp(candidates_per_group, slot_budget)
+
+            for food_group, chosen in selected.items():
                 used_foods.add(chosen['FoodName'])
-                remaining     -= chosen['Energi']
                 total_day_cal += chosen['Energi']
                 daily_plan['Makanan'].append({
                     'WaktuMakan'       : meal_time,
@@ -359,47 +479,24 @@ def generate_meal_plan(nutrition_req, df_preprocessed, df_original,
                     'VitaminD'         : round(chosen['VitaminD'], 2),
                     'EuclideanDistance': round(chosen['euclidean_distance'], 4),
                 })
-        min_cal    = daily_calorie * 0.90
-        max_cal    = daily_calorie * 1.10
-        target_cal = daily_calorie
-        nutrisi_cols = ['Energi', 'Protein', 'Lemak', 'Karbohidrat', 'Serat',
-                        'GulaTotal', 'LemakJenuh', 'Natrium',
-                        'Kalium', 'Kalsium', 'Magnesium', 'Besi', 'VitaminC', 'VitaminD']
-        utama_pendamping = [f for f in daily_plan['Makanan']
-                            if f['FoodGroup'] in ('Makanan Utama', 'Makanan Pendamping')
-                            and f['WaktuMakan'] not in ('Snack Pagi', 'Snack Sore')]
-        utama_pendamping.sort(key=lambda f: (0 if f['FoodGroup']=='Makanan Utama' else 1))
-        satu_porsi = {f['FoodName']: {n: f[n] for n in nutrisi_cols if n in f}
-                      for f in utama_pendamping}
-        MAX_PORSI   = 300
-        slot_totals = {}
-        for f in daily_plan['Makanan']:
-            slot_totals[f['WaktuMakan']] = slot_totals.get(f['WaktuMakan'], 0) + f['Energi']
-        while total_day_cal < min_cal:
-            kandidat = []
-            for f in utama_pendamping:
-                if f.get('Porsi', 100) >= MAX_PORSI: continue
-                porsi_cal = satu_porsi[f['FoodName']]['Energi']
-                if total_day_cal + porsi_cal > max_cal: continue
-                slot = f['WaktuMakan']
-                if slot_totals.get(slot,0)+porsi_cal > target_cal*MEAL_CALORIE_RATIO.get(slot,0.2)*1.3:
-                    continue
-                kandidat.append(f)
-            if not kandidat: break
-            target_food = min(kandidat,
-                key=lambda f: (0 if f['FoodGroup']=='Makanan Utama' else 1,
-                               satu_porsi[f['FoodName']]['Energi']))
-            porsi_awal = satu_porsi[target_food['FoodName']]
-            total_day_cal += porsi_awal['Energi']
-            slot_totals[target_food['WaktuMakan']] = \
-                slot_totals.get(target_food['WaktuMakan'],0) + porsi_awal['Energi']
-            target_food['Porsi'] = target_food.get('Porsi', 100) + 100
-            for nut in nutrisi_cols:
-                if nut in target_food and nut in porsi_awal:
-                    target_food[nut] = round(target_food[nut] + porsi_awal[nut], 2)
-        daily_plan['Total_Kalori'] = round(total_day_cal, 2)
+
         meal_plan.append(daily_plan)
+
     return meal_plan
+
+
+def export_meal_plan_to_df(meal_plan):
+    rows = []
+    for day_plan in meal_plan:
+        for food in day_plan['Makanan']:
+            rows.append({'Hari': day_plan['Hari'], **food})
+    df = pd.DataFrame(rows)
+
+    print("\n========== SAMPEL HASIL MEAL PLAN ==========")
+    print(df[['Hari', 'WaktuMakan', 'FoodGroup', 'FoodCategory',
+              'FoodName', 'Energi', 'EuclideanDistance']].to_string(index=False))
+
+    return df
 
 def meal_plan_to_df(meal_plan):
     rows = []
