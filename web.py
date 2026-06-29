@@ -699,31 +699,44 @@ if generate_btn:
         st.header("📈 Evaluasi Meal Plan")
         total_per_hari = meal_plan_df.groupby('Hari')['Energi'].sum()
         target_kalori  = nutrition_req['Energi']
-
         mape_kalori    = (total_per_hari - target_kalori).abs().mean() / target_kalori * 100
-        target_turun   = wlp['total_loss_target']
-        mape_penurunan = abs(prediksi_turun - target_turun) / target_turun * 100
 
-        mape_eval = {}
-        for col, tgt in nutrient_targets.items():
-            if col in daily_nutrient.columns:
-                mape_val       = (daily_nutrient[col] - tgt).abs().mean()
-                mape_eval[col] = round(mape_val / tgt * 100, 1)
-        rata_mape = sum(mape_eval.values()) / len(mape_eval)
-
-        ec1, ec2, ec3 = st.columns(3)
+        ec1, ec2 = st.columns(2)
         ec1.metric("MAPE Kalori", f"{mape_kalori:.1f}%",
                    help="Rata-rata persentase selisih kalori harian vs target")
-        ec2.metric("MAPE Penurunan", f"{mape_penurunan:.2f}%",
-                   help="Persentase selisih prediksi penurunan vs target penurunan")
-        ec3.metric("Rata-rata MAPE Nutrisi", f"{rata_mape:.1f}%",
-                   help="Rata-rata MAPE dari semua nutrisi")
+        ec2.metric("Target Kalori Harian", f"{target_kalori:.0f} kkal")
 
-        st.subheader("MAPE per Nutrisi (% dari Target)")
-        mape_rows = []
-        for col, pct in mape_eval.items():
-            mape_rows.append({"Nutrisi": col, "MAPE (%)": f"{pct:.1f}"})
-        st.dataframe(pd.DataFrame(mape_rows), use_container_width=True, hide_index=True)
+        # Tabel pemenuhan nutrisi per hari (semua nutrisi × 7 hari)
+        st.subheader("Pemenuhan Nutrisi per Hari (%)")
+        all_nutrient_targets = {
+            'Energi'     : nutrition_req['Energi'],
+            'Protein'    : nutrition_req['Protein'],
+            'Lemak'      : nutrition_req['Lemak'],
+            'Karbohidrat': nutrition_req['Karbohidrat'],
+            'Serat'      : nutrition_req['Serat'],
+            'Kalium'     : nutrition_req['Kalium'],
+            'Kalsium'    : nutrition_req['Kalsium'],
+            'Magnesium'  : nutrition_req['Magnesium'],
+            'Besi'       : nutrition_req['Besi'],
+            'VitaminC'   : nutrition_req['VitaminC'],
+            'VitaminD'   : nutrition_req['VitaminD'],
+        }
+        daily_all = meal_plan_df.groupby('Hari')[list(all_nutrient_targets.keys())].sum()
+
+        pemenuhan_data = {}
+        for nutrisi, tgt in all_nutrient_targets.items():
+            pemenuhan_data[nutrisi] = [
+                f"{daily_all.loc[hari, nutrisi] / tgt * 100:.1f}%"
+                if tgt > 0 else "–"
+                for hari in range(1, 8)
+            ]
+
+        df_pemenuhan = pd.DataFrame(
+            pemenuhan_data,
+            index=[f"Hari {i}" for i in range(1, 8)]
+        ).T
+        df_pemenuhan.index.name = "Nutrisi"
+        st.dataframe(df_pemenuhan, use_container_width=True)
 
         # --- TABEL LENGKAP & DOWNLOAD ---
         with st.expander("📋 Tabel Lengkap Meal Plan 7 Hari"):
