@@ -230,7 +230,6 @@ MEAL_FOOD_GROUPS = {
     'Makan Malam': ['Makanan Utama', 'Makanan Pendamping'],
 }
 
-N_CANDIDATES = 100
 
 
 def build_category_rotation(df_original, days=7, seed=42):
@@ -264,7 +263,7 @@ def build_category_rotation(df_original, days=7, seed=42):
 
 def get_knn_candidates_per_group(nutrition_req, df_preprocessed, df_original,
                                  scaler, nutrient_cols, food_group,
-                                 meal_proportion, n_candidates=N_CANDIDATES,
+                                 meal_proportion,
                                  target_category=None):
     """
     Mencari N kandidat makanan paling mirip secara nutrisi menggunakan KNN
@@ -297,8 +296,7 @@ def get_knn_candidates_per_group(nutrition_req, df_preprocessed, df_original,
     query_knn        = query_normalized[0][feat_indices].reshape(1, -1)
 
     X_group  = df_group[KNN_FEATURES].values
-    k_actual = min(n_candidates, len(df_group))
-    knn_g    = NearestNeighbors(n_neighbors=k_actual, metric='euclidean')
+    knn_g = NearestNeighbors(n_neighbors=len(df_group), metric='euclidean')
     knn_g.fit(X_group)
 
     distances, local_idx = knn_g.kneighbors(query_knn)
@@ -430,7 +428,7 @@ def generate_meal_plan(nutrition_req, df_preprocessed, df_original,
 
                 candidates = get_knn_candidates_per_group(
                     nutrition_req, df_preprocessed, df_original, scaler, nutrient_cols,
-                    food_group, ratio, N_CANDIDATES, target_category)
+                    food_group, ratio, target_category)
 
                 pool = candidates[~candidates['FoodName'].isin(used_foods)].copy() \
                        if not candidates.empty else pd.DataFrame()
@@ -439,7 +437,7 @@ def generate_meal_plan(nutrition_req, df_preprocessed, df_original,
                 if pool.empty and food_group != 'Kacang':
                     candidates = get_knn_candidates_per_group(
                         nutrition_req, df_preprocessed, df_original, scaler, nutrient_cols,
-                        food_group, ratio, N_CANDIDATES, None)
+                        food_group, ratio, None)
                     pool = candidates[~candidates['FoodName'].isin(used_foods)].copy() \
                            if not candidates.empty else pd.DataFrame()
 
@@ -447,7 +445,7 @@ def generate_meal_plan(nutrition_req, df_preprocessed, df_original,
                 if pool.empty and food_group == 'Makanan Utama':
                     candidates = get_knn_candidates_per_group(
                         nutrition_req, df_preprocessed, df_original, scaler, nutrient_cols,
-                        food_group, ratio, N_CANDIDATES, None)
+                        food_group, ratio, None)
                     pool = candidates.copy() if not candidates.empty else pd.DataFrame()
 
                 if not pool.empty:
