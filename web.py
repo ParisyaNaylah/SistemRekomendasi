@@ -40,6 +40,7 @@ def load_and_preprocess():
         'ragi|bir|keras|pengganti krim', case=False, na=False)].copy()
     df_clean = df_clean[df_clean['FoodCategory'] != 'Babi']
     df_clean['FoodGroup'] = df_clean['FoodCategory'].map(food_group_mapping)
+    df_clean = df_clean[df_clean['FoodGroup'].notna()]
     cols = df_clean.columns.tolist()
     food_name_idx = cols.index('FoodName')
     if 'FoodGroup' in cols:
